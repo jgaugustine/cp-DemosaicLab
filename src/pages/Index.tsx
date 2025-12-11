@@ -1251,10 +1251,10 @@ export default function Index() {
                   disabled={input?.mode === 'raw'}
                   className="w-full"
                 >
-                  <ToggleGroupItem value="bayer" aria-label="Bayer CFA" className="flex-1 text-xs" disabled={input?.mode === 'raw'}>
+                  <ToggleGroupItem value="bayer" aria-label="Bayer CFA" className="flex-1 text-xs bg-card" disabled={input?.mode === 'raw'}>
                     Bayer (RGGB)
                   </ToggleGroupItem>
-                  <ToggleGroupItem value="xtrans" aria-label="X-Trans CFA" className="flex-1 text-xs" disabled={input?.mode === 'raw'}>
+                  <ToggleGroupItem value="xtrans" aria-label="X-Trans CFA" className="flex-1 text-xs bg-card" disabled={input?.mode === 'raw'}>
                     X-Trans (6x6)
                   </ToggleGroupItem>
                 </ToggleGroup>
@@ -1598,14 +1598,14 @@ export default function Index() {
                     className="w-full"
                   >
                     {hasGroundTruth && (
-                      <ToggleGroupItem value="original" aria-label="Show original" className="flex-1 text-xs">
+                    <ToggleGroupItem value="original" aria-label="Show original" className="flex-1 text-xs bg-card">
                         Original
                       </ToggleGroupItem>
                     )}
-                    <ToggleGroupItem value="cfa" aria-label="Show CFA" className="flex-1 text-xs">
+                  <ToggleGroupItem value="cfa" aria-label="Show CFA" className="flex-1 text-xs bg-card">
                       CFA
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="reconstruction" aria-label="Show reconstruction" className="flex-1 text-xs">
+                  <ToggleGroupItem value="reconstruction" aria-label="Show reconstruction" className="flex-1 text-xs bg-card">
                       Reconstruction
                     </ToggleGroupItem>
                   </ToggleGroup>
