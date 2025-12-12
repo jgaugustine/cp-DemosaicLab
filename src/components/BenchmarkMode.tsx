@@ -254,20 +254,26 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
             imageName,
             config.iterations,
             config.enableQualityMetrics,
-            defaultParams
+            defaultParams,
+            () => cancelRef.current // Pass cancellation check function
           );
           newResults.push(result);
           setResults([...newResults]);
         } catch (error) {
+          if (error instanceof Error && error.message === 'Benchmark cancelled') {
+            // Cancellation is expected, just break
+            break;
+          }
           console.error(`Benchmark failed for ${testName}:`, error);
         }
+        
+        // Check for cancellation after each test
+        if (cancelRef.current) break;
 
         currentTest++;
         
-        // Yield to UI every few tests
-        if (currentTest % 3 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
+        // Yield to UI after each test to allow cancellation to be checked
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 

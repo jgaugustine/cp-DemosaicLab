@@ -115,15 +115,24 @@ export const runSingleBenchmark = async (
   imageName: string,
   iterations: number,
   enableQualityMetrics: boolean,
-  params?: DemosaicParams
+  params?: DemosaicParams,
+  shouldCancel?: () => boolean
 ): Promise<BenchmarkResult> => {
   const pixelCount = input.width * input.height;
   const executionTimes: number[] = [];
   let memoryBefore: number | undefined;
   let memoryAfter: number | undefined;
   
+  // Check for cancellation before starting
+  if (shouldCancel && shouldCancel()) {
+    throw new Error('Benchmark cancelled');
+  }
+  
   // Warm-up run (not counted)
   if (iterations > 1) {
+    if (shouldCancel && shouldCancel()) {
+      throw new Error('Benchmark cancelled');
+    }
     runDemosaic(input, algorithm, params);
   }
   
@@ -134,6 +143,11 @@ export const runSingleBenchmark = async (
   
   // Run iterations
   for (let i = 0; i < iterations; i++) {
+    // Check for cancellation before each iteration
+    if (shouldCancel && shouldCancel()) {
+      throw new Error('Benchmark cancelled');
+    }
+    
     // Force garbage collection hint (may not work in all browsers)
     if (i > 0 && i % 10 === 0 && 'gc' in (globalThis as any)) {
       try {
@@ -148,6 +162,11 @@ export const runSingleBenchmark = async (
     const end = performance.now();
     
     executionTimes.push(end - start);
+    
+    // Yield to allow cancellation check
+    if (i < iterations - 1) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
     
     // Store the last result for quality metrics
     if (i === iterations - 1) {
@@ -166,6 +185,11 @@ export const runSingleBenchmark = async (
   // Calculate throughput CI bounds
   const throughputLower = pixelCount / (stats.ci95Upper / 1000) / 1_000_000;
   const throughputUpper = pixelCount / (stats.ci95Lower / 1000) / 1_000_000;
+  
+  // Check for cancellation before quality metrics
+  if (shouldCancel && shouldCancel()) {
+    throw new Error('Benchmark cancelled');
+  }
   
   // Compute quality metrics if enabled and ground truth is available
   let quality: BenchmarkResult['quality'] | undefined;
