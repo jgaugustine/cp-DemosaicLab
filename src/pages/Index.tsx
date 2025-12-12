@@ -1157,7 +1157,7 @@ export default function Index() {
                 </ToggleGroup>
                 <Button 
                   variant="outline" 
-                  className="w-full mt-3"
+                  className="w-full mt-3 !text-xs"
                   onClick={() => setBenchmarkMode(true)}
                 >
                   Benchmark Mode
@@ -1251,10 +1251,20 @@ export default function Index() {
                   disabled={input?.mode === 'raw'}
                   className="w-full"
                 >
-                  <ToggleGroupItem value="bayer" aria-label="Bayer CFA" className="flex-1 text-xs bg-card" disabled={input?.mode === 'raw'}>
+                  <ToggleGroupItem 
+                    value="bayer" 
+                    aria-label="Bayer CFA" 
+                    className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground" 
+                    disabled={input?.mode === 'raw'}
+                  >
                     Bayer (RGGB)
                   </ToggleGroupItem>
-                  <ToggleGroupItem value="xtrans" aria-label="X-Trans CFA" className="flex-1 text-xs bg-card" disabled={input?.mode === 'raw'}>
+                  <ToggleGroupItem 
+                    value="xtrans" 
+                    aria-label="X-Trans CFA" 
+                    className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground" 
+                    disabled={input?.mode === 'raw'}
+                  >
                     X-Trans (6x6)
                   </ToggleGroupItem>
                 </ToggleGroup>
@@ -1598,14 +1608,26 @@ export default function Index() {
                     className="w-full"
                   >
                     {hasGroundTruth && (
-                    <ToggleGroupItem value="original" aria-label="Show original" className="flex-1 text-xs bg-card">
+                      <ToggleGroupItem 
+                        value="original" 
+                        aria-label="Show original" 
+                        className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+                      >
                         Original
                       </ToggleGroupItem>
                     )}
-                  <ToggleGroupItem value="cfa" aria-label="Show CFA" className="flex-1 text-xs bg-card">
+                    <ToggleGroupItem 
+                      value="cfa" 
+                      aria-label="Show CFA" 
+                      className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+                    >
                       CFA
                     </ToggleGroupItem>
-                  <ToggleGroupItem value="reconstruction" aria-label="Show reconstruction" className="flex-1 text-xs bg-card">
+                    <ToggleGroupItem 
+                      value="reconstruction" 
+                      aria-label="Show reconstruction" 
+                      className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+                    >
                       Reconstruction
                     </ToggleGroupItem>
                   </ToggleGroup>
