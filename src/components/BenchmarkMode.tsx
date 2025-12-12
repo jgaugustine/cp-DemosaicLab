@@ -234,11 +234,11 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
     const newResults: BenchmarkResult[] = [];
     let currentTest = 0;
 
-    for (const algo of config.algorithms) {
-      if (cancelRef.current) break;
+    algorithmLoop: for (const algo of config.algorithms) {
+      if (cancelRef.current) break algorithmLoop;
 
       for (const { input, imageName } of testInputs) {
-        if (cancelRef.current) break;
+        if (cancelRef.current) break algorithmLoop;
 
         const testName = `${algo} on ${imageName} with ${input.cfaPattern}`;
         setProgress(prev => ({
@@ -261,14 +261,14 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
           setResults([...newResults]);
         } catch (error) {
           if (error instanceof Error && error.message === 'Benchmark cancelled') {
-            // Cancellation is expected, just break
-            break;
+            // Cancellation is expected, break from both loops
+            break algorithmLoop;
           }
           console.error(`Benchmark failed for ${testName}:`, error);
         }
         
         // Check for cancellation after each test
-        if (cancelRef.current) break;
+        if (cancelRef.current) break algorithmLoop;
 
         currentTest++;
         
@@ -277,14 +277,27 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
       }
     }
 
-    setProgress(prev => ({
-      ...prev,
-      current: totalTests,
-      currentTest: 'Complete',
-      isRunning: false,
-    }));
-
-    setResults(newResults);
+    // Only update final state if not cancelled
+    if (!cancelRef.current) {
+      setProgress(prev => ({
+        ...prev,
+        current: totalTests,
+        currentTest: 'Complete',
+        isRunning: false,
+      }));
+      setResults(newResults);
+    } else {
+      // Update progress to show cancellation
+      setProgress(prev => ({
+        ...prev,
+        currentTest: 'Cancelled',
+        isRunning: false,
+      }));
+      // Keep partial results if any were collected
+      if (newResults.length > 0) {
+        setResults(newResults);
+      }
+    }
   }, [config, generateTestInputs, defaultParams]);
 
   const handleCancel = () => {
