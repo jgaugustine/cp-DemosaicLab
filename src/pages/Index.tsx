@@ -18,6 +18,10 @@ import {
   demosaicLienEdgeBased,
   demosaicWuPolynomial,
   demosaicKikuResidual,
+  demosaicXTransNiuEdgeSensing,
+  demosaicXTransLienEdgeBased,
+  demosaicXTransWuPolynomial,
+  demosaicXTransKikuResidual,
   computeErrorStats
 } from '@/lib/demosaic';
 import { decodeDNG } from '@/lib/dngDecode';
@@ -70,6 +74,7 @@ export default function Index() {
   const [params, setParams] = useState<DemosaicParams>({
     niuLogisticThreshold: 0.1,
     wuPolynomialDegree: 2,
+    kikuResidualIterations: 3,
   });
 
   // Algo 2 State
@@ -80,6 +85,7 @@ export default function Index() {
   const [params2, setParams2] = useState<DemosaicParams>({
     niuLogisticThreshold: 0.1,
     wuPolynomialDegree: 2,
+    kikuResidualIterations: 3,
   });
 
   const [cfaType, setCfaType] = useState<CFAType>('bayer');
@@ -960,6 +966,18 @@ export default function Index() {
 
   // Helper to run demosaic with caching
   const runDemosaic = useCallback((inp: DemosaicInput, algo: DemosaicAlgorithm, algoParams?: DemosaicParams) => {
+    // Use X-Trans specific implementations when CFA pattern is X-Trans
+    if (inp.cfaPattern === 'xtrans') {
+      if (algo === 'nearest') return demosaicNearest(inp);
+      if (algo === 'bilinear') return demosaicBilinear(inp);
+      if (algo === 'niu_edge_sensing') return demosaicXTransNiuEdgeSensing(inp, algoParams);
+      if (algo === 'lien_edge_based') return demosaicXTransLienEdgeBased(inp);
+      if (algo === 'wu_polynomial') return demosaicXTransWuPolynomial(inp, algoParams);
+      if (algo === 'kiku_residual') return demosaicXTransKikuResidual(inp, algoParams);
+      return new ImageData(inp.width, inp.height);
+    }
+    
+    // Use Bayer/generic implementations for Bayer pattern
     if (algo === 'nearest') return demosaicNearest(inp);
     if (algo === 'bilinear') return demosaicBilinear(inp);
     if (algo === 'niu_edge_sensing') return demosaicNiuEdgeSensing(inp, algoParams);

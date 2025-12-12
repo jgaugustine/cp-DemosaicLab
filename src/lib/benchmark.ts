@@ -14,6 +14,10 @@ import {
   demosaicLienEdgeBased,
   demosaicWuPolynomial,
   demosaicKikuResidual,
+  demosaicXTransNiuEdgeSensing,
+  demosaicXTransLienEdgeBased,
+  demosaicXTransWuPolynomial,
+  demosaicXTransKikuResidual,
   computeErrorStats
 } from './demosaic';
 
@@ -23,6 +27,27 @@ const runDemosaic = (
   algorithm: DemosaicAlgorithm, 
   params?: DemosaicParams
 ): ImageData => {
+  // Use X-Trans specific implementations when CFA pattern is X-Trans
+  if (input.cfaPattern === 'xtrans') {
+    switch (algorithm) {
+      case 'nearest':
+        return demosaicNearest(input);
+      case 'bilinear':
+        return demosaicBilinear(input);
+      case 'niu_edge_sensing':
+        return demosaicXTransNiuEdgeSensing(input, params);
+      case 'lien_edge_based':
+        return demosaicXTransLienEdgeBased(input);
+      case 'wu_polynomial':
+        return demosaicXTransWuPolynomial(input, params);
+      case 'kiku_residual':
+        return demosaicXTransKikuResidual(input, params);
+      default:
+        return new ImageData(input.width, input.height);
+    }
+  }
+  
+  // Use Bayer/generic implementations for Bayer pattern
   switch (algorithm) {
     case 'nearest':
       return demosaicNearest(input);
