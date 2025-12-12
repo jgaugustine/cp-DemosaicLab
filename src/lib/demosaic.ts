@@ -675,10 +675,14 @@ export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicPara
   const getChannel = getChannelFunction(input);
   const degree = params?.wuPolynomialDegree ?? 2;
   
-  // For BAYER, use radius=1 to match theoretical assumptions (symmetric neighbors at d=√2)
-  // The theoretical bound assumes symmetric neighbors, which holds for radius=1
+  // For BAYER, use radius=2 to enable distance weighting benefits
+  // Radius=1 makes all neighbors equidistant, eliminating distance weighting advantage
+  // Radius=2 provides neighbors at multiple distances (d=1, √2, 2, √5) allowing
+  // closer neighbors to be weighted more heavily, which helps with edge handling
+  // The theoretical bound (≥28 dB) assumes radius=1 for smooth images, but
+  // practical performance on edges benefits from radius=2's distance weighting
   // For X-Trans, use larger radius (5-6) since pattern is 6x6 aperiodic
-  const maxRadius = input.cfaPattern === 'bayer' ? 1 : 6;
+  const maxRadius = input.cfaPattern === 'bayer' ? 2 : 6;
   
   // First pass: Interpolate green channel
   const greenInterp = new Float32Array(width * height);
