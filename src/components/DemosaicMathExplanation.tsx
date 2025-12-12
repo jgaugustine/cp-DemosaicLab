@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
@@ -172,11 +172,12 @@ function ScalarFieldHeatmap({ field, width, height, label }: ScalarFieldHeatmapP
   );
 }
 
-const SYNTHETIC_EXPLANATIONS: Record<string, { 
+// Define SYNTHETIC_EXPLANATIONS as a function to avoid initialization order issues
+const getSyntheticExplanations = (): Record<string, { 
     title: string; 
     whatToLookFor: string;
     analysis: (cfa: CFAType, algo: DemosaicAlgorithm) => React.ReactNode;
-}> = {
+}> => ({
     'zoneplate': {
         title: "Zone Plate",
         whatToLookFor: "Observe the center for clarity and the edges for color artifacts (Moiré). High-frequency details often cause false colors in simple demosaicing.",
@@ -286,7 +287,7 @@ const SYNTHETIC_EXPLANATIONS: Record<string, {
             </>
         )
     }
-};
+});
 
 export function DemosaicMathExplanation({ 
   cfaType, 
@@ -299,6 +300,8 @@ export function DemosaicMathExplanation({
   syntheticType,
   params
 }: MathPanelProps) {
+  const syntheticExplanations = useMemo(() => getSyntheticExplanations(), []);
+  
   const laplacianField = useMemo(() => {
     if (!input?.groundTruthRGB) return undefined;
     try {
@@ -349,24 +352,24 @@ export function DemosaicMathExplanation({
           <TabsContent value="algo" className="space-y-4 animate-in fade-in-50 overflow-y-auto pr-1">
             <div className="text-sm space-y-4">
               
-              {syntheticType && SYNTHETIC_EXPLANATIONS[syntheticType] && (
+              {syntheticType && syntheticExplanations[syntheticType] && (
                 <div className="bg-primary/5 border border-primary/20 p-3 rounded-md space-y-2">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-primary text-base">{SYNTHETIC_EXPLANATIONS[syntheticType].title} Analysis</h3>
+                    <h3 className="font-bold text-primary text-base">{syntheticExplanations[syntheticType].title} Analysis</h3>
                   </div>
                   
                   <div className="space-y-3">
                     <div>
                         <h4 className="text-xs font-bold uppercase text-muted-foreground mb-1">What to Look For</h4>
                         <p className="text-xs text-foreground leading-relaxed">
-                            {SYNTHETIC_EXPLANATIONS[syntheticType].whatToLookFor}
+                            {syntheticExplanations[syntheticType].whatToLookFor}
                         </p>
                     </div>
                     
                     <div className="pt-2 border-t border-primary/10">
                         <h4 className="text-xs font-bold uppercase text-muted-foreground mb-1">Algorithm Performance</h4>
                         <div className="text-xs text-foreground leading-relaxed">
-                            {SYNTHETIC_EXPLANATIONS[syntheticType].analysis(cfaType, algorithm)}
+                            {syntheticExplanations[syntheticType].analysis(cfaType, algorithm)}
                         </div>
                     </div>
                   </div>

@@ -99,6 +99,33 @@ export default function Index() {
   const [isFit, setIsFit] = useState(true);
   const isAnyProcessing = isProcessing1 || isProcessing2;
   const [showProcessingOverlay, setShowProcessingOverlay] = useState(false);
+  
+  // Helper to get algorithm display name (defined early to avoid initialization order issues)
+  const getAlgorithmName = (algo: DemosaicAlgorithm): string => {
+    switch (algo) {
+      case 'nearest':
+        return 'Nearest Neighbor';
+      case 'bilinear':
+        return 'Bilinear Interpolation';
+      case 'malvar':
+        return 'Malvar';
+      case 'high_quality':
+        return 'High Quality';
+      case 'custom':
+        return 'Custom';
+      case 'niu_edge_sensing':
+        return 'Niu et al. (Edge Sensing)';
+      case 'lien_edge_based':
+        return 'Lien et al. (Edge-Based)';
+      case 'wu_polynomial':
+        return 'Wu et al. (Polynomial)';
+      case 'kiku_residual':
+        return 'Kiku et al. (Residual)';
+      default:
+        return 'Unknown';
+    }
+  };
+  
   const processingLabel = React.useMemo(() => {
     if (isProcessing1 && isProcessing2) {
       return `Algorithms A (${getAlgorithmName(algorithm)}) & B (${getAlgorithmName(algorithm2)})`;
@@ -356,32 +383,6 @@ export default function Index() {
 
   // Check if original view is available
   const hasGroundTruth = input && (input.mode === 'lab' || input.mode === 'synthetic') && input.groundTruthRGB;
-
-  // Helper to get algorithm display name
-  const getAlgorithmName = (algo: DemosaicAlgorithm): string => {
-    switch (algo) {
-      case 'nearest':
-        return 'Nearest Neighbor';
-      case 'bilinear':
-        return 'Bilinear Interpolation';
-      case 'malvar':
-        return 'Malvar';
-      case 'high_quality':
-        return 'High Quality';
-      case 'custom':
-        return 'Custom';
-      case 'niu_edge_sensing':
-        return 'Niu et al. (Edge Sensing)';
-      case 'wu_polynomial':
-        return 'Wu et al. (Polynomial)';
-      case 'lien_edge_based':
-        return 'Lien et al. (Edge-Based)';
-      case 'kiku_residual':
-        return 'Kiku et al. (Residual)';
-      default:
-        return 'Unknown';
-    }
-  };
 
   // Get viewport configurations for a preset
   const getPresetConfigs = useCallback((
@@ -1874,6 +1875,7 @@ export default function Index() {
                   } : undefined}
                   errorStats={errorStats}
                   input={input}
+                  syntheticType={syntheticType}
                   params={params}
                 />
             )}
