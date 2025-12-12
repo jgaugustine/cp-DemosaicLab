@@ -504,7 +504,7 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
         const ch = getChannel(x, y);
         if (ch !== 'r' && RGComputed[y * width + x] === 0) {
           // Need to interpolate R-G at this pixel (green or blue position)
-          const neighbors: number[] = [];
+          const neighbors: {val: number, pos: string}[] = [];
           
           // Check immediate neighbors
           if (x > 0 && RGComputed[(y) * width + (x - 1)]) {
@@ -559,6 +559,14 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
               RG[y * width + x] = neighbors.reduce((a, b) => a + b.val, 0) / neighbors.length;
               RGComputed[y * width + x] = 1;
             }
+          } else if (pass === 2 && neighbors.length === 1) {
+            // Final pass fallback: use single neighbor if available
+            RG[y * width + x] = neighbors[0].val;
+            RGComputed[y * width + x] = 1;
+          } else if (pass === 2 && neighbors.length === 0) {
+            // Final pass fallback: use 0 if no neighbors found (shouldn't happen in normal cases)
+            RG[y * width + x] = 0;
+            RGComputed[y * width + x] = 1;
           }
         }
       }
@@ -628,6 +636,14 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
               BG[y * width + x] = neighbors.reduce((a, b) => a + b.val, 0) / neighbors.length;
               BGComputed[y * width + x] = 1;
             }
+          } else if (pass === 2 && neighbors.length === 1) {
+            // Final pass fallback: use single neighbor if available
+            BG[y * width + x] = neighbors[0].val;
+            BGComputed[y * width + x] = 1;
+          } else if (pass === 2 && neighbors.length === 0) {
+            // Final pass fallback: use 0 if no neighbors found (shouldn't happen in normal cases)
+            BG[y * width + x] = 0;
+            BGComputed[y * width + x] = 1;
           }
         }
       }
