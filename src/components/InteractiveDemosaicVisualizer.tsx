@@ -2,6 +2,18 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { DemosaicInput, DemosaicAlgorithm, DemosaicParams } from "@/types/demosaic";
 import { getBayerKernel, getXTransKernel } from "@/lib/cfa";
+import { 
+  demosaicNearest,
+  demosaicBilinear,
+  demosaicNiuEdgeSensing,
+  demosaicLienEdgeBased,
+  demosaicWuPolynomial,
+  demosaicKikuResidual,
+  demosaicXTransNiuEdgeSensing,
+  demosaicXTransLienEdgeBased,
+  demosaicXTransWuPolynomial,
+  demosaicXTransKikuResidual,
+} from "@/lib/demosaic";
 import { InlineMath } from "react-katex";
 import "katex/dist/katex.min.css";
 
@@ -120,14 +132,61 @@ export function InteractiveDemosaicVisualizer({
   const globalCursorY = regionOriginY + localCursorY;
 
   // Extract region data (CFA and Demosaiced)
-  // We need to re-run demosaic for just this region or extract from full image if available?
-  // The component props only give `input`. We don't have the full demosaiced image passed in here,
-  // but we can compute it locally for the region. This is actually better as we can show the "What if" scenario.
-  
+  // Use the actual demosaic functions and extract the region from the full output
   const regionData = useMemo(() => {
     const { width, height, cfaData, cfaPatternMeta, cfaPattern } = input;
     const inputImageData = new ImageData(REGION_SIZE, REGION_SIZE);
     const outputImageData = new ImageData(REGION_SIZE, REGION_SIZE);
+    
+    // Run the actual demosaic algorithm on the full image
+    let fullOutput: ImageData;
+    if (input.cfaPattern === 'xtrans') {
+      switch (algorithm) {
+        case 'nearest':
+          fullOutput = demosaicNearest(input);
+          break;
+        case 'bilinear':
+          fullOutput = demosaicBilinear(input);
+          break;
+        case 'niu_edge_sensing':
+          fullOutput = demosaicXTransNiuEdgeSensing(input, params);
+          break;
+        case 'lien_edge_based':
+          fullOutput = demosaicXTransLienEdgeBased(input);
+          break;
+        case 'wu_polynomial':
+          fullOutput = demosaicXTransWuPolynomial(input, params);
+          break;
+        case 'kiku_residual':
+          fullOutput = demosaicXTransKikuResidual(input, params);
+          break;
+        default:
+          fullOutput = new ImageData(width, height);
+      }
+    } else {
+      switch (algorithm) {
+        case 'nearest':
+          fullOutput = demosaicNearest(input);
+          break;
+        case 'bilinear':
+          fullOutput = demosaicBilinear(input);
+          break;
+        case 'niu_edge_sensing':
+          fullOutput = demosaicNiuEdgeSensing(input, params);
+          break;
+        case 'lien_edge_based':
+          fullOutput = demosaicLienEdgeBased(input);
+          break;
+        case 'wu_polynomial':
+          fullOutput = demosaicWuPolynomial(input, params);
+          break;
+        case 'kiku_residual':
+          fullOutput = demosaicKikuResidual(input, params);
+          break;
+        default:
+          fullOutput = new ImageData(width, height);
+      }
+    }
     
     // Fix: Properly handle both Bayer and XTrans patterns
     const getChannel = cfaPattern === 'bayer' 
@@ -150,461 +209,48 @@ export function InteractiveDemosaicVisualizer({
         return cfaData[sy * width + sx];
     };
 
-    // Generate Input Mosaic Visualization for Region
+    // Generate Input Mosaic Visualization for Region and extract output region
     for (let y = 0; y < REGION_SIZE; y++) {
       for (let x = 0; x < REGION_SIZE; x++) {
         const gx = regionOriginX + x;
         const gy = regionOriginY + y;
         
+        const idx = (y * REGION_SIZE + x) * 4;
+        
         // Check bounds for drawing black outside
         if (gx < 0 || gx >= width || gy < 0 || gy >= height) {
-           const idx = (y * REGION_SIZE + x) * 4;
            inputImageData.data[idx] = 0;
            inputImageData.data[idx+1] = 0;
            inputImageData.data[idx+2] = 0;
            inputImageData.data[idx+3] = 255;
-           outputImageData.data[idx] = 0; // Fill output with black too
+           outputImageData.data[idx] = 0;
+           outputImageData.data[idx+1] = 0;
+           outputImageData.data[idx+2] = 0;
+           outputImageData.data[idx+3] = 255;
            continue;
         }
 
+        // Extract CFA input visualization
         const val = getVal(gx, gy);
         const ch = getChannel(gx, gy);
         const v = Math.round(val * 255);
         
-        const idx = (y * REGION_SIZE + x) * 4;
         inputImageData.data[idx] = ch === 'r' ? v : 0;
         inputImageData.data[idx+1] = ch === 'g' ? v : 0;
         inputImageData.data[idx+2] = ch === 'b' ? v : 0;
         inputImageData.data[idx+3] = 255;
         
-        // Calculate Output (Demosaiced) for this pixel
-        // We implement the logic locally to avoid dependency loops and overhead
-        let r = 0, g = 0, b = 0;
-        
-        if (algorithm === 'nearest') {
-            if (ch === 'r') {
-                r = val;
-                // Find nearest G and B
-                for (let d = 1; d <= 10; d++) {
-                    for (let dy = -d; dy <= d; dy++) {
-                        for (let dx = -d; dx <= d; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > d - 1 && dist <= d) {
-                                const nch = getChannel(gx + dx, gy + dy);
-                                if (nch === 'g' && g === 0) g = getVal(gx + dx, gy + dy);
-                                if (nch === 'b' && b === 0) b = getVal(gx + dx, gy + dy);
-                            }
-                        }
-                    }
-                    if (g > 0 && b > 0) break;
-                }
-            } else if (ch === 'b') {
-                b = val;
-                for (let d = 1; d <= 10; d++) {
-                    for (let dy = -d; dy <= d; dy++) {
-                        for (let dx = -d; dx <= d; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > d - 1 && dist <= d) {
-                                const nch = getChannel(gx + dx, gy + dy);
-                                if (nch === 'g' && g === 0) g = getVal(gx + dx, gy + dy);
-                                if (nch === 'r' && r === 0) r = getVal(gx + dx, gy + dy);
-                            }
-                        }
-                    }
-                    if (g > 0 && r > 0) break;
-                }
-            } else { // Green
-                g = val;
-                for (let d = 1; d <= 10; d++) {
-                    for (let dy = -d; dy <= d; dy++) {
-                        for (let dx = -d; dx <= d; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > d - 1 && dist <= d) {
-                                const nch = getChannel(gx + dx, gy + dy);
-                                if (nch === 'r' && r === 0) r = getVal(gx + dx, gy + dy);
-                                if (nch === 'b' && b === 0) b = getVal(gx + dx, gy + dy);
-                            }
-                        }
-                    }
-                    if (r > 0 && b > 0) break;
-                }
-            }
-        } else if (algorithm === 'bilinear') {
-            if (ch === 'g') {
-                g = val;
-                const leftCh = getChannel(gx - 1, gy);
-                const rightCh = getChannel(gx + 1, gy);
-                const isRedRow = (leftCh === 'r' || rightCh === 'r');
-                
-                if (isRedRow) {
-                    r = (getVal(gx-1, gy) + getVal(gx+1, gy)) / 2;
-                    b = (getVal(gx, gy-1) + getVal(gx, gy+1)) / 2;
-                } else {
-                    r = (getVal(gx, gy-1) + getVal(gx, gy+1)) / 2;
-                    b = (getVal(gx-1, gy) + getVal(gx+1, gy)) / 2;
-                }
-            } else if (ch === 'r') {
-                r = val;
-                g = (getVal(gx-1, gy) + getVal(gx+1, gy) + getVal(gx, gy-1) + getVal(gx, gy+1)) / 4;
-                b = (getVal(gx-1, gy-1) + getVal(gx+1, gy-1) + getVal(gx-1, gy+1) + getVal(gx+1, gy+1)) / 4;
-            } else { // Blue
-                b = val;
-                g = (getVal(gx-1, gy) + getVal(gx+1, gy) + getVal(gx, gy-1) + getVal(gx, gy+1)) / 4;
-                r = (getVal(gx-1, gy-1) + getVal(gx+1, gy-1) + getVal(gx-1, gy+1) + getVal(gx+1, gy+1)) / 4;
-            }
-        } else if (algorithm === 'niu_edge_sensing') {
-            // Simplified: First pass green interpolation
-            let greenInterp = 0;
-            if (ch === 'g') {
-                greenInterp = val;
-            } else {
-                const threshold = params?.niuLogisticThreshold ?? 0.1;
-                const steepness = params?.niuLogisticSteepness;
-                const vars = computeDirectionalVariations(cfaData, width, height, gx, gy, getChannel, getVal);
-                const wH = logisticFunction(vars.horizontal, threshold, steepness);
-                const wV = logisticFunction(vars.vertical, threshold, steepness);
-                const sumW = wH + wV;
-                const nH = (sumW > 0) ? (1.0 - wH / sumW) : 0.5;
-                const nV = (sumW > 0) ? (1.0 - wV / sumW) : 0.5;
-                const gH = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                const gV = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                greenInterp = (gH * nH + gV * nV) / (nH + nV);
-            }
-            
-            // Second pass: R/B interpolation
-            if (ch === 'r') {
-                r = val;
-                g = greenInterp;
-                const bMinusG = [
-                    getVal(gx - 1, gy - 1) - greenInterp,
-                    getVal(gx + 1, gy - 1) - greenInterp,
-                    getVal(gx - 1, gy + 1) - greenInterp,
-                    getVal(gx + 1, gy + 1) - greenInterp
-                ];
-                const avgBMinusG = bMinusG.reduce((a, b) => a + b, 0) / bMinusG.length;
-                b = g + avgBMinusG;
-            } else if (ch === 'b') {
-                b = val;
-                g = greenInterp;
-                const rMinusG = [
-                    getVal(gx - 1, gy - 1) - greenInterp,
-                    getVal(gx + 1, gy - 1) - greenInterp,
-                    getVal(gx - 1, gy + 1) - greenInterp,
-                    getVal(gx + 1, gy + 1) - greenInterp
-                ];
-                const avgRMinusG = rMinusG.reduce((a, b) => a + b, 0) / rMinusG.length;
-                r = g + avgRMinusG;
-            } else {
-                g = val;
-                const leftCh = getChannel(gx - 1, gy);
-                const isRedRow = (leftCh === 'r' || getChannel(gx + 1, gy) === 'r');
-                if (isRedRow) {
-                    r = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                    b = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                } else {
-                    r = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                    b = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                }
-            }
-        } else if (algorithm === 'lien_edge_based') {
-            if (ch === 'g') {
-                g = val;
-                const diffH = Math.abs(getVal(gx - 1, gy) - getVal(gx + 1, gy));
-                const diffV = Math.abs(getVal(gx, gy - 1) - getVal(gx, gy + 1));
-                const leftCh = getChannel(gx - 1, gy);
-                const isRedRow = (leftCh === 'r' || getChannel(gx + 1, gy) === 'r');
-                
-                if (isRedRow) {
-                    if (diffH < diffV) {
-                        r = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                        b = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                    } else {
-                        r = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                        b = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                    }
-                } else {
-                    if (diffH < diffV) {
-                        r = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                        b = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                    } else {
-                        r = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                        b = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                    }
-                }
-            } else if (ch === 'r') {
-                r = val;
-                const diffH = Math.abs(getVal(gx - 1, gy) - getVal(gx + 1, gy));
-                const diffV = Math.abs(getVal(gx, gy - 1) - getVal(gx, gy + 1));
-                if (diffH < diffV) {
-                    g = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                } else {
-                    g = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                }
-                const avgB = (getVal(gx - 1, gy - 1) + getVal(gx + 1, gy - 1) + getVal(gx - 1, gy + 1) + getVal(gx + 1, gy + 1)) / 4;
-                const avgG = (getVal(gx - 1, gy) + getVal(gx + 1, gy) + getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 4;
-                b = avgB + (g - avgG);
-            } else { // Blue
-                b = val;
-                const diffH = Math.abs(getVal(gx - 1, gy) - getVal(gx + 1, gy));
-                const diffV = Math.abs(getVal(gx, gy - 1) - getVal(gx, gy + 1));
-                if (diffH < diffV) {
-                    g = (getVal(gx - 1, gy) + getVal(gx + 1, gy)) / 2;
-                } else {
-                    g = (getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 2;
-                }
-                const avgR = (getVal(gx - 1, gy - 1) + getVal(gx + 1, gy - 1) + getVal(gx - 1, gy + 1) + getVal(gx + 1, gy + 1)) / 4;
-                const avgG = (getVal(gx - 1, gy) + getVal(gx + 1, gy) + getVal(gx, gy - 1) + getVal(gx, gy + 1)) / 4;
-                r = avgR + (g - avgG);
-            }
-        } else if (algorithm === 'wu_polynomial') {
-            // First pass: Compute green interpolation for this region
-            // We need to compute green for all pixels first, then use it
-            // For region view, we compute green interpolation on-the-fly
-            const degree = 2; // Default polynomial degree
-            
-            let greenInterp = 0;
-            if (ch === 'g') {
-                greenInterp = val;
-            } else {
-                // Use polynomial interpolation for green
-                const gNeighbors = collectNeighbors(cfaData, width, height, gx, gy, 'g', getChannel, getVal);
-                if (gNeighbors.values.length > 0) {
-                    greenInterp = polynomialInterpolate(gNeighbors.values, gNeighbors.distances, degree);
-                } else {
-                    greenInterp = val;
-                }
-            }
-            
-            // Second pass: Interpolate R/B using polynomial interpolation
-            if (ch === 'r') {
-                r = val;
-                g = greenInterp;
-                const bNeighbors = collectNeighbors(cfaData, width, height, gx, gy, 'b', getChannel, getVal);
-                if (bNeighbors.values.length > 0) {
-                    b = polynomialInterpolate(bNeighbors.values, bNeighbors.distances, degree);
-                } else {
-                    b = g;
-                }
-            } else if (ch === 'b') {
-                b = val;
-                g = greenInterp;
-                const rNeighbors = collectNeighbors(cfaData, width, height, gx, gy, 'r', getChannel, getVal);
-                if (rNeighbors.values.length > 0) {
-                    r = polynomialInterpolate(rNeighbors.values, rNeighbors.distances, degree);
-                } else {
-                    r = g;
-                }
-            } else {
-                g = val;
-                greenInterp = val;
-                const rNeighbors = collectNeighbors(cfaData, width, height, gx, gy, 'r', getChannel, getVal);
-                const bNeighbors = collectNeighbors(cfaData, width, height, gx, gy, 'b', getChannel, getVal);
-                if (rNeighbors.values.length > 0) {
-                    r = polynomialInterpolate(rNeighbors.values, rNeighbors.distances, degree);
-                }
-                if (bNeighbors.values.length > 0) {
-                    b = polynomialInterpolate(bNeighbors.values, bNeighbors.distances, degree);
-                }
-            }
-        } else if (algorithm === 'kiku_residual') {
-            // Kiku residual interpolation requires computing initial estimates first
-            // For region view, we compute bilinear estimates for all region pixels
-            // Then compute and interpolate residuals
-            
-            // First: Compute initial bilinear estimate for this pixel
-            let initialR = 0, initialG = 0, initialB = 0;
-            if (ch === 'g') {
-                initialG = val;
-                const leftCh = getChannel(gx - 1, gy);
-                const rightCh = getChannel(gx + 1, gy);
-                const isRedRow = (leftCh === 'r' || rightCh === 'r');
-                if (isRedRow) {
-                    initialR = (getVal(gx-1, gy) + getVal(gx+1, gy)) / 2;
-                    initialB = (getVal(gx, gy-1) + getVal(gx, gy+1)) / 2;
-                } else {
-                    initialR = (getVal(gx, gy-1) + getVal(gx, gy+1)) / 2;
-                    initialB = (getVal(gx-1, gy) + getVal(gx+1, gy)) / 2;
-                }
-            } else if (ch === 'r') {
-                initialR = val;
-                initialG = (getVal(gx-1, gy) + getVal(gx+1, gy) + getVal(gx, gy-1) + getVal(gx, gy+1)) / 4;
-                initialB = (getVal(gx-1, gy-1) + getVal(gx+1, gy-1) + getVal(gx-1, gy+1) + getVal(gx+1, gy+1)) / 4;
-            } else {
-                initialB = val;
-                initialG = (getVal(gx-1, gy) + getVal(gx+1, gy) + getVal(gx, gy-1) + getVal(gx, gy+1)) / 4;
-                initialR = (getVal(gx-1, gy-1) + getVal(gx+1, gy-1) + getVal(gx-1, gy+1) + getVal(gx+1, gy+1)) / 4;
-            }
-            
-            // Compute residual at this pixel (observed - estimated)
-            let residualR = 0, residualG = 0, residualB = 0;
-            if (ch === 'r') {
-                residualR = val - initialR;
-            } else if (ch === 'g') {
-                residualG = val - initialG;
-            } else {
-                residualB = val - initialB;
-            }
-            
-            // Interpolate residuals from neighbors using the same pattern as bilinear
-            // For each missing channel, average residuals from neighbors of that color
-            let interpolatedResidualR = 0, interpolatedResidualG = 0, interpolatedResidualB = 0;
-            
-            // Helper to compute initial estimate at a neighbor pixel (for residual computation)
-            const getInitialEstimate = (px: number, py: number, targetCh: 'r' | 'g' | 'b'): number => {
-                const nch = getChannel(px, py);
-                const nval = getVal(px, py);
-                if (nch === targetCh) return nval;
-                
-                // Compute bilinear estimate
-                if (targetCh === 'g') {
-                    if (nch === 'r' || nch === 'b') {
-                        return (getVal(px-1, py) + getVal(px+1, py) + getVal(px, py-1) + getVal(px, py+1)) / 4;
-                    }
-                } else if (targetCh === 'r') {
-                    if (nch === 'b') {
-                        return (getVal(px-1, py-1) + getVal(px+1, py-1) + getVal(px-1, py+1) + getVal(px+1, py+1)) / 4;
-                    } else if (nch === 'g') {
-                        const leftCh = getChannel(px - 1, py);
-                        const isRedRow = (leftCh === 'r' || getChannel(px + 1, py) === 'r');
-                        return isRedRow ? (getVal(px-1, py) + getVal(px+1, py)) / 2 : (getVal(px, py-1) + getVal(px, py+1)) / 2;
-                    }
-                } else { // targetCh === 'b'
-                    if (nch === 'r') {
-                        return (getVal(px-1, py-1) + getVal(px+1, py-1) + getVal(px-1, py+1) + getVal(px+1, py+1)) / 4;
-                    } else if (nch === 'g') {
-                        const leftCh = getChannel(px - 1, py);
-                        const isRedRow = (leftCh === 'r' || getChannel(px + 1, py) === 'r');
-                        return isRedRow ? (getVal(px, py-1) + getVal(px, py+1)) / 2 : (getVal(px-1, py) + getVal(px+1, py)) / 2;
-                    }
-                }
-                return 0;
-            };
-            
-            // Compute and interpolate residuals using expanding search
-            // Helper to collect residual neighbors with positions
-            const collectResidualNeighborsWithPos = (
-                targetColor: 'r' | 'g' | 'b',
-                maxRadius: number = 5
-            ): Array<{x: number, y: number, residual: number}> => {
-                const results: Array<{x: number, y: number, residual: number}> = [];
-                for (let dy = -maxRadius; dy <= maxRadius; dy++) {
-                    for (let dx = -maxRadius; dx <= maxRadius; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-                        const nx = gx + dx;
-                        const ny = gy + dy;
-                        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
-                        const nch = getChannel(nx, ny);
-                        if (nch === targetColor) {
-                            const nval = getVal(nx, ny);
-                            const nestimate = getInitialEstimate(nx, ny, targetColor);
-                            results.push({x: nx, y: ny, residual: nval - nestimate});
-                        }
-                    }
-                }
-                return results;
-            };
-            
-            if (ch === 'r') {
-                interpolatedResidualR = residualR;
-                const gResidualNeighbors = collectResidualNeighborsWithPos('g', 5);
-                const bResidualNeighbors = collectResidualNeighborsWithPos('b', 5);
-                if (gResidualNeighbors.length > 0) {
-                    interpolatedResidualG = gResidualNeighbors.reduce((sum, n) => sum + n.residual, 0) / gResidualNeighbors.length;
-                }
-                if (bResidualNeighbors.length > 0) {
-                    interpolatedResidualB = bResidualNeighbors.reduce((sum, n) => sum + n.residual, 0) / bResidualNeighbors.length;
-                }
-            } else if (ch === 'g') {
-                interpolatedResidualG = residualG;
-                const rResidualNeighbors = collectResidualNeighborsWithPos('r', 5);
-                const bResidualNeighbors = collectResidualNeighborsWithPos('b', 5);
-                if (rResidualNeighbors.length > 0) {
-                    interpolatedResidualR = rResidualNeighbors.reduce((sum, n) => sum + n.residual, 0) / rResidualNeighbors.length;
-                }
-                if (bResidualNeighbors.length > 0) {
-                    interpolatedResidualB = bResidualNeighbors.reduce((sum, n) => sum + n.residual, 0) / bResidualNeighbors.length;
-                }
-            } else { // Blue
-                interpolatedResidualB = residualB;
-                const gResidualNeighbors = collectResidualNeighborsWithPos('g', 5);
-                const rResidualNeighbors = collectResidualNeighborsWithPos('r', 5);
-                if (gResidualNeighbors.length > 0) {
-                    interpolatedResidualG = gResidualNeighbors.reduce((sum, n) => sum + n.residual, 0) / gResidualNeighbors.length;
-                }
-                if (rResidualNeighbors.length > 0) {
-                    interpolatedResidualR = rResidualNeighbors.reduce((sum, n) => sum + n.residual, 0) / rResidualNeighbors.length;
-                }
-            }
-            
-            // Refined estimate: initial + interpolated residual
-            r = initialR + interpolatedResidualR;
-            g = initialG + interpolatedResidualG;
-            b = initialB + interpolatedResidualB;
-        } else {
-            // Fallback: use nearest
-            if (ch === 'r') {
-                r = val;
-                for (let d = 1; d <= 10; d++) {
-                    for (let dy = -d; dy <= d; dy++) {
-                        for (let dx = -d; dx <= d; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > d - 1 && dist <= d) {
-                                const nch = getChannel(gx + dx, gy + dy);
-                                if (nch === 'g' && g === 0) g = getVal(gx + dx, gy + dy);
-                                if (nch === 'b' && b === 0) b = getVal(gx + dx, gy + dy);
-                            }
-                        }
-                    }
-                    if (g > 0 && b > 0) break;
-                }
-            } else if (ch === 'b') {
-                b = val;
-                for (let d = 1; d <= 10; d++) {
-                    for (let dy = -d; dy <= d; dy++) {
-                        for (let dx = -d; dx <= d; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > d - 1 && dist <= d) {
-                                const nch = getChannel(gx + dx, gy + dy);
-                                if (nch === 'g' && g === 0) g = getVal(gx + dx, gy + dy);
-                                if (nch === 'r' && r === 0) r = getVal(gx + dx, gy + dy);
-                            }
-                        }
-                    }
-                    if (g > 0 && r > 0) break;
-                }
-            } else {
-                g = val;
-                for (let d = 1; d <= 10; d++) {
-                    for (let dy = -d; dy <= d; dy++) {
-                        for (let dx = -d; dx <= d; dx++) {
-                            if (dx === 0 && dy === 0) continue;
-                            const dist = Math.sqrt(dx * dx + dy * dy);
-                            if (dist > d - 1 && dist <= d) {
-                                const nch = getChannel(gx + dx, gy + dy);
-                                if (nch === 'r' && r === 0) r = getVal(gx + dx, gy + dy);
-                                if (nch === 'b' && b === 0) b = getVal(gx + dx, gy + dy);
-                            }
-                        }
-                    }
-                    if (r > 0 && b > 0) break;
-                }
-            }
-        }
-        
-        outputImageData.data[idx] = Math.min(255, Math.max(0, Math.round(r * 255)));
-        outputImageData.data[idx+1] = Math.min(255, Math.max(0, Math.round(g * 255)));
-        outputImageData.data[idx+2] = Math.min(255, Math.max(0, Math.round(b * 255)));
-        outputImageData.data[idx+3] = 255;
+        // Extract demosaiced output from full image
+        const fullIdx = (gy * width + gx) * 4;
+        outputImageData.data[idx] = fullOutput.data[fullIdx];
+        outputImageData.data[idx+1] = fullOutput.data[fullIdx+1];
+        outputImageData.data[idx+2] = fullOutput.data[fullIdx+2];
+        outputImageData.data[idx+3] = fullOutput.data[fullIdx+3];
       }
     }
     
     return { inputImageData, outputImageData };
-  }, [input, regionOriginX, regionOriginY, algorithm]);
+  }, [input, regionOriginX, regionOriginY, algorithm, params]);
 
   // Compute Kernels for the current cursor position
   const kernels = useMemo(() => {

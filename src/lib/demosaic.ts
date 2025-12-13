@@ -310,7 +310,7 @@ export const demosaicBilinear = (input: DemosaicInput): ImageData => {
   return output;
 };
 
-// Niu et al. (2018) - Low-cost Edge Sensing - works for any CFA pattern
+// Low-cost Edge Sensing - works for any CFA pattern
 export const demosaicNiuEdgeSensing = (input: DemosaicInput, params?: DemosaicParams): ImageData => {
   const { width, height, cfaData } = input;
   const output = new ImageData(width, height);
@@ -408,7 +408,7 @@ export const demosaicNiuEdgeSensing = (input: DemosaicInput, params?: DemosaicPa
   return output;
 };
 
-// Lien et al. (2017) - Efficient Edge-Based Technique - works for any CFA pattern
+// Hamilton-Adams - Efficient Edge-Based Technique - works for any CFA pattern
 export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
   const { width, height, cfaData } = input;
   const output = new ImageData(width, height);
@@ -668,7 +668,7 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
   return output;
 };
 
-// Wu et al. (2016) - Polynomial Interpolation - works for any CFA pattern
+// Polynomial Interpolation - works for any CFA pattern
 export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicParams): ImageData => {
   const { width, height, cfaData } = input;
   const output = new ImageData(width, height);
@@ -788,7 +788,7 @@ const collectResidualNeighbors = (
   return values;
 };
 
-// Kiku et al. (2016) - Residual Interpolation - works for any CFA pattern
+// Residual Interpolation - works for any CFA pattern
 export const demosaicKikuResidual = (input: DemosaicInput, params?: DemosaicParams): ImageData => {
   const { width, height, cfaData } = input;
   const iterations = params?.kikuResidualIterations ?? 1;

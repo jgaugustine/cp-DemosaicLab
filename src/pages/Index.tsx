@@ -33,7 +33,7 @@ import { HelpTooltip } from '@/components/ui/HelpTooltip';
 // Viewport configuration type
 type ViewportConfig = {
   viewType: 'original' | 'cfa' | 'reconstruction';
-  cfaPattern?: CFAType; // For CFA views
+  cfaPattern?: CFAType; // For CFA views and reconstruction views (allows per-viewport CFA)
   algorithm?: DemosaicAlgorithm; // For reconstruction views (uses algorithm or algorithm2)
   useAlgorithm2?: boolean; // Whether to use algorithm2 instead of algorithm
 };
@@ -43,6 +43,7 @@ type ComparisonPreset =
   | 'cfa-vs-reconstruction' 
   | 'algorithm-comparison' 
   | 'cfa-comparison' 
+  | 'algorithm-cfa-comparison'
   | '4-up-standard' 
   | 'custom';
 
@@ -114,13 +115,13 @@ export default function Index() {
       case 'custom':
         return 'Custom';
       case 'niu_edge_sensing':
-        return 'Niu et al. (Edge Sensing)';
+        return 'Edge Sensing';
       case 'lien_edge_based':
-        return 'Lien et al. (Edge-Based)';
+        return 'Hamilton-Adams (Edge-Based)';
       case 'wu_polynomial':
-        return 'Wu et al. (Polynomial)';
+        return 'Polynomial Interpolation';
       case 'kiku_residual':
-        return 'Kiku et al. (Residual)';
+        return 'Residual Interpolation';
       default:
         return 'Unknown';
     }
@@ -423,6 +424,12 @@ export default function Index() {
             { viewType: 'cfa', cfaPattern: 'xtrans' },
           ];
         
+        case 'algorithm-cfa-comparison':
+          return [
+            { viewType: 'reconstruction', useAlgorithm2: false, cfaPattern: 'bayer' },
+            { viewType: 'reconstruction', useAlgorithm2: false, cfaPattern: 'xtrans' },
+          ];
+        
         default:
           return [
             { viewType: 'cfa', cfaPattern: 'bayer' },
@@ -480,6 +487,14 @@ export default function Index() {
             { viewType: 'cfa', cfaPattern: 'xtrans' },
           ];
         
+        case 'algorithm-cfa-comparison':
+          return [
+            { viewType: 'reconstruction', useAlgorithm2: false, cfaPattern: 'bayer' },
+            { viewType: 'reconstruction', useAlgorithm2: false, cfaPattern: 'xtrans' },
+            { viewType: 'reconstruction', useAlgorithm2: true, cfaPattern: 'bayer' },
+            { viewType: 'reconstruction', useAlgorithm2: true, cfaPattern: 'xtrans' },
+          ];
+        
         default:
           return [
             { viewType: 'cfa', cfaPattern: 'bayer' },
@@ -490,29 +505,6 @@ export default function Index() {
       }
     }
   }, []);
-
-  // Determine which image to display based on viewport config
-  const getDisplayImage = useCallback((config: ViewportConfig): ImageData | null => {
-    if (!input) return null;
-    
-    switch (config.viewType) {
-      case 'original':
-        return input.groundTruthRGB || null;
-      
-      case 'cfa':
-        if (config.cfaPattern) {
-          return cfaImages[config.cfaPattern] || null;
-        }
-        // Fallback to current CFA image if pattern not specified
-        return cfaImage;
-      
-      case 'reconstruction':
-        return config.useAlgorithm2 ? outputImage2 : outputImage;
-      
-      default:
-        return outputImage;
-    }
-  }, [input, cfaImage, cfaImages, outputImage, outputImage2]);
 
   // Helper to generate label from viewport config
   const getViewportLabel = (config: ViewportConfig): string => {
@@ -525,7 +517,9 @@ export default function Index() {
         return 'Bayer CFA';
       case 'reconstruction':
         const algo = config.useAlgorithm2 ? algorithm2 : algorithm;
-        return getAlgorithmName(algo);
+        const cfa = config.cfaPattern || cfaType;
+        const cfaLabel = cfa === 'xtrans' ? 'X-Trans' : cfa === 'foveon' ? 'Foveon' : 'Bayer';
+        return `${getAlgorithmName(algo)} (${cfaLabel})`;
       default:
         return 'Unknown';
     }
@@ -1002,8 +996,36 @@ export default function Index() {
       return cached;
     }
     
-    // Compute new result
-    const image = runDemosaic(inp, algo, algoParams);
+    // If the requested CFA is different from the input's CFA, create a modified input
+    let demosaicInput = inp;
+    if (cfa !== inp.cfaPattern) {
+      // Generate new CFA data for the requested pattern
+      let newCfaData: Float32Array | Uint16Array;
+      
+      if ((inp.mode === 'lab' || inp.mode === 'synthetic') && inp.groundTruthRGB) {
+        // Generate CFA from ground truth
+        newCfaData = simulateCFA(inp.groundTruthRGB, cfa);
+      } else {
+        // For raw mode, we can't generate a different CFA, so use the original
+        // This shouldn't happen in practice for algorithm-cfa-comparison mode
+        newCfaData = inp.cfaData;
+      }
+      
+      // Create modified input with the new CFA pattern
+      demosaicInput = {
+        ...inp,
+        cfaPattern: cfa,
+        cfaPatternMeta: {
+          tileW: cfa === 'xtrans' ? 6 : 2,
+          tileH: cfa === 'xtrans' ? 6 : 2,
+          layout: cfa === 'bayer' ? 'RGGB' : 'custom'
+        },
+        cfaData: newCfaData
+      };
+    }
+    
+    // Compute new result with the (possibly modified) input
+    const image = runDemosaic(demosaicInput, algo, algoParams);
     let errorStats: ErrorStats | null = null;
     if ((inp.mode === 'lab' || inp.mode === 'synthetic') && inp.groundTruthRGB) {
       errorStats = computeErrorStats(inp.groundTruthRGB, image);
@@ -1013,6 +1035,60 @@ export default function Index() {
     reconstructionCacheRef.current.set(cacheKey, result);
     return result;
   }, [createCacheKey, runDemosaic]);
+
+  // Helper to get reconstruction for a specific algorithm+CFA combination
+  const getReconstructionForConfig = useCallback((config: ViewportConfig): ImageData | null => {
+    if (!input || config.viewType !== 'reconstruction') return null;
+    
+    const algo = config.useAlgorithm2 ? algorithm2 : algorithm;
+    const algoParams = config.useAlgorithm2 ? params2 : params;
+    const cfa = config.cfaPattern || cfaType; // Use viewport-specific CFA or fallback to global
+    
+    // Check cache first
+    const cacheKey = createCacheKey(inputIdRef.current, algo, cfa, algoParams);
+    const cached = reconstructionCacheRef.current.get(cacheKey);
+    
+    if (cached) {
+      return cached.image;
+    }
+    
+    // If not cached, compute it synchronously (this might be slow, but needed for viewport display)
+    // In production, you might want to pre-compute these
+    try {
+      const result = getOrComputeReconstruction(input, algo, cfa, algoParams);
+      return result.image;
+    } catch {
+      return null;
+    }
+  }, [input, algorithm, algorithm2, params, params2, cfaType, createCacheKey, getOrComputeReconstruction]);
+
+  // Determine which image to display based on viewport config
+  const getDisplayImage = useCallback((config: ViewportConfig): ImageData | null => {
+    if (!input) return null;
+    
+    switch (config.viewType) {
+      case 'original':
+        return input.groundTruthRGB || null;
+      
+      case 'cfa':
+        if (config.cfaPattern) {
+          return cfaImages[config.cfaPattern] || null;
+        }
+        // Fallback to current CFA image if pattern not specified
+        return cfaImage;
+      
+      case 'reconstruction':
+        // If viewport has a specific CFA pattern, use that; otherwise use default behavior
+        if (config.cfaPattern) {
+          return getReconstructionForConfig(config);
+        }
+        // Fallback to standard output images
+        return config.useAlgorithm2 ? outputImage2 : outputImage;
+      
+      default:
+        return outputImage;
+    }
+  }, [input, cfaImage, cfaImages, outputImage, outputImage2, getReconstructionForConfig]);
 
   // Pipeline 1
   useEffect(() => {
@@ -1303,10 +1379,10 @@ export default function Index() {
                     <SelectContent>
                       <SelectItem value="nearest">Nearest Neighbor</SelectItem>
                       <SelectItem value="bilinear">Bilinear Interpolation</SelectItem>
-                      <SelectItem value="niu_edge_sensing">Niu et al. (Edge Sensing)</SelectItem>
-                      <SelectItem value="wu_polynomial">Wu et al. (Polynomial)</SelectItem>
-                      <SelectItem value="lien_edge_based">Lien et al. (Edge-Based)</SelectItem>
-                      <SelectItem value="kiku_residual">Kiku et al. (Residual)</SelectItem>
+                      <SelectItem value="niu_edge_sensing">Edge Sensing</SelectItem>
+                      <SelectItem value="wu_polynomial">Polynomial Interpolation</SelectItem>
+                      <SelectItem value="lien_edge_based">Hamilton-Adams (Edge-Based)</SelectItem>
+                      <SelectItem value="kiku_residual">Residual Interpolation</SelectItem>
                     </SelectContent>
                   </Select>
                   {errorStats && (
@@ -1347,10 +1423,10 @@ export default function Index() {
                       <SelectContent>
                         <SelectItem value="nearest">Nearest Neighbor</SelectItem>
                         <SelectItem value="bilinear">Bilinear Interpolation</SelectItem>
-                        <SelectItem value="niu_edge_sensing">Niu et al. (Edge Sensing)</SelectItem>
-                        <SelectItem value="wu_polynomial">Wu et al. (Polynomial)</SelectItem>
-                        <SelectItem value="lien_edge_based">Lien et al. (Edge-Based)</SelectItem>
-                        <SelectItem value="kiku_residual">Kiku et al. (Residual)</SelectItem>
+                        <SelectItem value="niu_edge_sensing">Edge Sensing</SelectItem>
+                        <SelectItem value="wu_polynomial">Polynomial Interpolation</SelectItem>
+                        <SelectItem value="lien_edge_based">Hamilton-Adams (Edge-Based)</SelectItem>
+                        <SelectItem value="kiku_residual">Residual Interpolation</SelectItem>
                       </SelectContent>
                     </Select>
                     {errorStats2 && (
@@ -1695,6 +1771,7 @@ export default function Index() {
                             <SelectItem value="cfa-vs-reconstruction">CFA vs Reconstruction</SelectItem>
                             <SelectItem value="algorithm-comparison">Algorithm Comparison</SelectItem>
                             <SelectItem value="cfa-comparison">CFA Comparison</SelectItem>
+                            <SelectItem value="algorithm-cfa-comparison">Algorithm on Different CFAs</SelectItem>
                             <SelectItem value="4-up-standard">4-Up Standard</SelectItem>
                             <SelectItem value="custom">Custom</SelectItem>
                           </SelectContent>
@@ -1739,20 +1816,37 @@ export default function Index() {
                                   </Select>
                                 )}
                                 {config.viewType === 'reconstruction' && (
-                                  <Select
-                                    value={config.useAlgorithm2 ? 'algorithm2' : 'algorithm1'}
-                                    onValueChange={(v: 'algorithm1' | 'algorithm2') => {
-                                      const newConfigs = [...customViewportConfigs];
-                                      newConfigs[idx] = { ...config, useAlgorithm2: v === 'algorithm2' };
-                                      setCustomViewportConfigs(newConfigs);
-                                    }}
-                                  >
-                                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="algorithm1">Algorithm A ({getAlgorithmName(algorithm)})</SelectItem>
-                                      <SelectItem value="algorithm2">Algorithm B ({getAlgorithmName(algorithm2)})</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                                  <>
+                                    <Select
+                                      value={config.useAlgorithm2 ? 'algorithm2' : 'algorithm1'}
+                                      onValueChange={(v: 'algorithm1' | 'algorithm2') => {
+                                        const newConfigs = [...customViewportConfigs];
+                                        newConfigs[idx] = { ...config, useAlgorithm2: v === 'algorithm2' };
+                                        setCustomViewportConfigs(newConfigs);
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="algorithm1">Algorithm A ({getAlgorithmName(algorithm)})</SelectItem>
+                                        <SelectItem value="algorithm2">Algorithm B ({getAlgorithmName(algorithm2)})</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    <Select
+                                      value={config.cfaPattern || cfaType}
+                                      onValueChange={(v: CFAType) => {
+                                        const newConfigs = [...customViewportConfigs];
+                                        newConfigs[idx] = { ...config, cfaPattern: v };
+                                        setCustomViewportConfigs(newConfigs);
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="CFA Pattern" /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="bayer">Bayer CFA</SelectItem>
+                                        <SelectItem value="xtrans">X-Trans CFA</SelectItem>
+                                        <SelectItem value="foveon">Foveon CFA</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </>
                                 )}
                               </div>
                             </div>

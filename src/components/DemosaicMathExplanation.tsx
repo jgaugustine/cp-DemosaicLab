@@ -424,7 +424,7 @@ export function DemosaicMathExplanation({
                     )}
                     {algorithm === 'niu_edge_sensing' && (
                       <>
-                        <p><strong>Low-Cost Edge Sensing</strong> (Niu et al., 2018). This algorithm improves upon the Hamilton-Adams method by introducing a low-cost edge sensing scheme that guides interpolation using directional variations.</p>
+                        <p><strong>Low-Cost Edge Sensing</strong>. This algorithm improves upon the Hamilton-Adams method by introducing a low-cost edge sensing scheme that guides interpolation using directional variations.</p>
                         <p>The algorithm computes directional variations in horizontal, vertical, and diagonal directions:</p>
                         <BlockMath math="\Delta_H = |I(x+1,y) - I(x-1,y)|, \quad \Delta_V = |I(x,y+1) - I(x,y-1)|" />
                         <p>These variations are then weighted using a logistic function to determine edge strength:</p>
@@ -435,7 +435,7 @@ export function DemosaicMathExplanation({
                     )}
                     {algorithm === 'lien_edge_based' && (
                       <>
-                        <p><strong>Efficient Edge-Based Technique</strong> (Lien et al., 2017). This method uses simple operations (addition, subtraction, shift, comparison) to detect edges and guide interpolation, making it highly suitable for hardware implementation.</p>
+                        <p><strong>Hamilton-Adams (Edge-Based)</strong>. This method uses simple operations (addition, subtraction, shift, comparison) to detect edges and guide interpolation, making it highly suitable for hardware implementation.</p>
                         <p>The algorithm detects edge direction by comparing color differences:</p>
                         <BlockMath math="\text{edge} = \begin{cases} \text{horizontal} & \text{if } |I(x-1,y) - I(x+1,y)| < |I(x,y-1) - I(x,y+1)| \\ \text{vertical} & \text{otherwise} \end{cases}" />
                         <p>Interpolation is then performed along the detected edge direction to preserve structural details. For example, if a horizontal edge is detected, the algorithm interpolates vertically (along the edge) rather than horizontally (across the edge).</p>
@@ -444,7 +444,7 @@ export function DemosaicMathExplanation({
                     )}
                     {algorithm === 'wu_polynomial' && (
                       <>
-                        <p><strong>Polynomial Interpolation</strong> (Wu et al., 2016). This algorithm uses polynomial interpolation instead of traditional bilinear or Laplacian predictors, providing more accurate estimation of missing color values.</p>
+                        <p><strong>Polynomial Interpolation</strong>. This algorithm uses polynomial interpolation instead of traditional bilinear or Laplacian predictors, providing more accurate estimation of missing color values.</p>
                         <p>The method introduces polynomial error predictors that better capture local image structure. For a set of neighboring values, the algorithm fits a polynomial:</p>
                         <BlockMath math="P_n(x) = \sum_{i=0}^{n} a_i x^i" />
                         <p>Where <InlineMath math="n" /> is the polynomial degree (typically 2-3). The algorithm also classifies edges using color differences to guide the interpolation process, then applies a weighted sum strategy in a refinement stage to reduce artifacts.</p>
@@ -453,7 +453,7 @@ export function DemosaicMathExplanation({
                     )}
                     {algorithm === 'kiku_residual' && (
                       <>
-                        <p><strong>Residual Interpolation</strong> (Kiku et al., 2016). Rather than directly interpolating missing colors, the algorithm interpolates <em>residuals</em> (what the initial guess got wrong) and adds those corrections back.</p>
+                        <p><strong>Residual Interpolation</strong>. Rather than directly interpolating missing colors, the algorithm interpolates <em>residuals</em> (what the initial guess got wrong) and adds those corrections back.</p>
                         <ol className="list-decimal list-inside space-y-1 text-xs">
                           <li>
                             <strong>Baseline:</strong> Build an initial estimate with bilinear interpolation <InlineMath math="\hat{I}_{0,c}(x,y)" /> for each channel <InlineMath math="c \in \{R,G,B\}" />.
@@ -646,7 +646,7 @@ export function DemosaicMathExplanation({
 
                     {algorithm === 'lien_edge_based' && (
                       <div>
-                        <h4 className="text-xs font-semibold text-primary mb-1">Lien Edge-Based</h4>
+                        <h4 className="text-xs font-semibold text-primary mb-1">Hamilton-Adams Edge-Based</h4>
                         <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
                           Interpolates perpendicular to detected edges. When correct (distance <InlineMath math="d = 1" />):
                         </p>
@@ -709,7 +709,7 @@ export function DemosaicMathExplanation({
                       <div className="text-[10px] space-y-1 font-mono">
                         <div className="flex justify-between"><span>Bilinear:</span><span>|e| ≲ 10, PSNR ≥ 28 dB</span></div>
                         <div className="flex justify-between"><span>Niu:</span><span>|e| ≲ 45, PSNR ≥ 15 dB*</span></div>
-                        <div className="flex justify-between"><span>Lien:</span><span>|e| ≲ 5–10, PSNR ≈ 34–28 dB</span></div>
+                        <div className="flex justify-between"><span>Hamilton-Adams:</span><span>|e| ≲ 5–10, PSNR ≈ 34–28 dB</span></div>
                         <div className="flex justify-between"><span>Wu:</span><span>|e| ≲ 10, PSNR ≥ 28 dB</span></div>
                         <div className="flex justify-between"><span>Kiku:</span><span>|e| ≲ 2.2, PSNR ≳ 41 dB**</span></div>
                       </div>
