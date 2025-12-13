@@ -504,7 +504,7 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
         const ch = getChannel(x, y);
         if (ch !== 'r' && RGComputed[y * width + x] === 0) {
           // Need to interpolate R-G at this pixel (green or blue position)
-          const neighbors: number[] = [];
+          const neighbors: {val: number, pos: string}[] = [];
           
           // Check immediate neighbors
           if (x > 0 && RGComputed[(y) * width + (x - 1)]) {
@@ -559,6 +559,14 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
               RG[y * width + x] = neighbors.reduce((a, b) => a + b.val, 0) / neighbors.length;
               RGComputed[y * width + x] = 1;
             }
+          } else if (pass === 2 && neighbors.length === 1) {
+            // Final pass fallback: use single neighbor if available
+            RG[y * width + x] = neighbors[0].val;
+            RGComputed[y * width + x] = 1;
+          } else if (pass === 2 && neighbors.length === 0) {
+            // Final pass fallback: use 0 if no neighbors found (shouldn't happen in normal cases)
+            RG[y * width + x] = 0;
+            RGComputed[y * width + x] = 1;
           }
         }
       }
@@ -628,6 +636,14 @@ export const demosaicLienEdgeBased = (input: DemosaicInput): ImageData => {
               BG[y * width + x] = neighbors.reduce((a, b) => a + b.val, 0) / neighbors.length;
               BGComputed[y * width + x] = 1;
             }
+          } else if (pass === 2 && neighbors.length === 1) {
+            // Final pass fallback: use single neighbor if available
+            BG[y * width + x] = neighbors[0].val;
+            BGComputed[y * width + x] = 1;
+          } else if (pass === 2 && neighbors.length === 0) {
+            // Final pass fallback: use 0 if no neighbors found (shouldn't happen in normal cases)
+            BG[y * width + x] = 0;
+            BGComputed[y * width + x] = 1;
           }
         }
       }
@@ -659,6 +675,15 @@ export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicPara
   const getChannel = getChannelFunction(input);
   const degree = params?.wuPolynomialDegree ?? 2;
   
+  // For BAYER, use radius=2 to enable distance weighting benefits
+  // Radius=1 makes all neighbors equidistant, eliminating distance weighting advantage
+  // Radius=2 provides neighbors at multiple distances (d=1, √2, 2, √5) allowing
+  // closer neighbors to be weighted more heavily, which helps with edge handling
+  // The theoretical bound (≥28 dB) assumes radius=1 for smooth images, but
+  // practical performance on edges benefits from radius=2's distance weighting
+  // For X-Trans, use larger radius (5-6) since pattern is 6x6 aperiodic
+  const maxRadius = input.cfaPattern === 'bayer' ? 2 : 6;
+  
   // First pass: Interpolate green channel
   const greenInterp = new Float32Array(width * height);
   for (let y = 0; y < height; y++) {
@@ -669,8 +694,8 @@ export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicPara
       if (centerCh === 'g') {
         greenInterp[y * width + x] = centerVal;
       } else {
-        // Use polynomial interpolation for green - expanding search
-        const gNeighbors = collectNeighbors(cfaData, width, height, x, y, 'g', getChannel);
+        // Use polynomial interpolation for green - optimized radius for pattern
+        const gNeighbors = collectNeighbors(cfaData, width, height, x, y, 'g', getChannel, maxRadius);
         if (gNeighbors.values.length > 0) {
           greenInterp[y * width + x] = polynomialInterpolate(gNeighbors.values, gNeighbors.distances, degree);
         } else {
@@ -694,7 +719,7 @@ export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicPara
         g = greenInterp[y * width + x];
         
         // Use polynomial interpolation on all blue neighbors
-        const bNeighbors = collectNeighbors(cfaData, width, height, x, y, 'b', getChannel);
+        const bNeighbors = collectNeighbors(cfaData, width, height, x, y, 'b', getChannel, maxRadius);
         if (bNeighbors.values.length > 0) {
           b = polynomialInterpolate(bNeighbors.values, bNeighbors.distances, degree);
         } else {
@@ -705,7 +730,7 @@ export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicPara
         g = greenInterp[y * width + x];
         
         // Use polynomial interpolation on all red neighbors
-        const rNeighbors = collectNeighbors(cfaData, width, height, x, y, 'r', getChannel);
+        const rNeighbors = collectNeighbors(cfaData, width, height, x, y, 'r', getChannel, maxRadius);
         if (rNeighbors.values.length > 0) {
           r = polynomialInterpolate(rNeighbors.values, rNeighbors.distances, degree);
         } else {
@@ -716,8 +741,8 @@ export const demosaicWuPolynomial = (input: DemosaicInput, params?: DemosaicPara
         g = centerVal;
         
         // Use polynomial interpolation on all neighbors
-        const rNeighbors = collectNeighbors(cfaData, width, height, x, y, 'r', getChannel);
-        const bNeighbors = collectNeighbors(cfaData, width, height, x, y, 'b', getChannel);
+        const rNeighbors = collectNeighbors(cfaData, width, height, x, y, 'r', getChannel, maxRadius);
+        const bNeighbors = collectNeighbors(cfaData, width, height, x, y, 'b', getChannel, maxRadius);
         if (rNeighbors.values.length > 0) {
           r = polynomialInterpolate(rNeighbors.values, rNeighbors.distances, degree);
         }
@@ -771,18 +796,38 @@ export const demosaicKikuResidual = (input: DemosaicInput, params?: DemosaicPara
   
   const val = (cx: number, cy: number) => getCfaVal(cfaData, width, height, cx, cy);
   
-  // Initial estimation using bilinear interpolation
-  const initial = demosaicBilinear(input);
-  
-  // Convert initial estimate to Float32Array for processing
+  // Initial estimation using bilinear interpolation - compute directly in 0-1 range
+  // to avoid precision loss from clamp/rounding
   const initialR = new Float32Array(width * height);
   const initialG = new Float32Array(width * height);
   const initialB = new Float32Array(width * height);
   
-  for (let i = 0; i < width * height; i++) {
-    initialR[i] = initial.data[i * 4] / 255.0;
-    initialG[i] = initial.data[i * 4 + 1] / 255.0;
-    initialB[i] = initial.data[i * 4 + 2] / 255.0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const centerCh = getChannel(x, y);
+      const centerVal = cfaData[y * width + x];
+      const idx = y * width + x;
+      
+      if (centerCh === 'g') {
+        initialG[idx] = centerVal;
+        const rNeighbors = collectNeighbors(cfaData, width, height, x, y, 'r', getChannel, 1);
+        const bNeighbors = collectNeighbors(cfaData, width, height, x, y, 'b', getChannel, 1);
+        initialR[idx] = rNeighbors.values.length > 0 ? rNeighbors.values.reduce((a, b) => a + b, 0) / rNeighbors.values.length : 0;
+        initialB[idx] = bNeighbors.values.length > 0 ? bNeighbors.values.reduce((a, b) => a + b, 0) / bNeighbors.values.length : 0;
+      } else if (centerCh === 'r') {
+        initialR[idx] = centerVal;
+        const gNeighbors = collectNeighbors(cfaData, width, height, x, y, 'g', getChannel, 1);
+        const bNeighbors = collectNeighbors(cfaData, width, height, x, y, 'b', getChannel, 1);
+        initialG[idx] = gNeighbors.values.length > 0 ? gNeighbors.values.reduce((a, b) => a + b, 0) / gNeighbors.values.length : 0;
+        initialB[idx] = bNeighbors.values.length > 0 ? bNeighbors.values.reduce((a, b) => a + b, 0) / bNeighbors.values.length : 0;
+      } else {
+        initialB[idx] = centerVal;
+        const gNeighbors = collectNeighbors(cfaData, width, height, x, y, 'g', getChannel, 1);
+        const rNeighbors = collectNeighbors(cfaData, width, height, x, y, 'r', getChannel, 1);
+        initialG[idx] = gNeighbors.values.length > 0 ? gNeighbors.values.reduce((a, b) => a + b, 0) / gNeighbors.values.length : 0;
+        initialR[idx] = rNeighbors.values.length > 0 ? rNeighbors.values.reduce((a, b) => a + b, 0) / rNeighbors.values.length : 0;
+      }
+    }
   }
   
   // Refine estimates: initial + interpolated residuals (with iterations)
@@ -797,7 +842,20 @@ export const demosaicKikuResidual = (input: DemosaicInput, params?: DemosaicPara
   let currentG = new Float32Array(initialG);
   let currentB = new Float32Array(initialB);
   
+  // Use the SAME interpolation method for residuals as used in initial bilinear estimate
+  // This ensures residuals are interpolated consistently with the initial estimate
+  // BAYER bilinear uses radius 1, X-Trans basic uses radius 2
+  const residualSearchRadius = input.cfaPattern === 'bayer' ? 1 : 2;
+  
   for (let iter = 0; iter < iterations; iter++) {
+    // Reset residual arrays for this iteration
+    residualR.fill(0);
+    residualG.fill(0);
+    residualB.fill(0);
+    interpolatedResidualR.fill(0);
+    interpolatedResidualG.fill(0);
+    interpolatedResidualB.fill(0);
+    
     // Compute residuals from current estimate
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -807,15 +865,9 @@ export const demosaicKikuResidual = (input: DemosaicInput, params?: DemosaicPara
         
         if (centerCh === 'r') {
           residualR[idx] = centerVal - currentR[idx];
-          residualG[idx] = 0;
-          residualB[idx] = 0;
         } else if (centerCh === 'g') {
-          residualR[idx] = 0;
           residualG[idx] = centerVal - currentG[idx];
-          residualB[idx] = 0;
         } else {
-          residualR[idx] = 0;
-          residualG[idx] = 0;
           residualB[idx] = centerVal - currentB[idx];
         }
       }
@@ -830,25 +882,25 @@ export const demosaicKikuResidual = (input: DemosaicInput, params?: DemosaicPara
         if (centerCh === 'r') {
           interpolatedResidualR[idx] = residualR[idx];
           
-          // Average all neighbors with expanding search
-          const gVals = collectResidualNeighbors(residualG, width, height, x, y, 'g', getChannel);
-          const bVals = collectResidualNeighbors(residualB, width, height, x, y, 'b', getChannel);
+          // Average all neighbors with optimized search radius
+          const gVals = collectResidualNeighbors(residualG, width, height, x, y, 'g', getChannel, residualSearchRadius);
+          const bVals = collectResidualNeighbors(residualB, width, height, x, y, 'b', getChannel, residualSearchRadius);
           interpolatedResidualG[idx] = gVals.length > 0 ? gVals.reduce((a, b) => a + b, 0) / gVals.length : 0;
           interpolatedResidualB[idx] = bVals.length > 0 ? bVals.reduce((a, b) => a + b, 0) / bVals.length : 0;
         } else if (centerCh === 'g') {
           interpolatedResidualG[idx] = residualG[idx];
           
-          // Average all neighbors with expanding search
-          const rVals = collectResidualNeighbors(residualR, width, height, x, y, 'r', getChannel);
-          const bVals = collectResidualNeighbors(residualB, width, height, x, y, 'b', getChannel);
+          // Average all neighbors with optimized search radius
+          const rVals = collectResidualNeighbors(residualR, width, height, x, y, 'r', getChannel, residualSearchRadius);
+          const bVals = collectResidualNeighbors(residualB, width, height, x, y, 'b', getChannel, residualSearchRadius);
           interpolatedResidualR[idx] = rVals.length > 0 ? rVals.reduce((a, b) => a + b, 0) / rVals.length : 0;
           interpolatedResidualB[idx] = bVals.length > 0 ? bVals.reduce((a, b) => a + b, 0) / bVals.length : 0;
         } else {
           interpolatedResidualB[idx] = residualB[idx];
           
-          // Average all neighbors with expanding search
-          const gVals = collectResidualNeighbors(residualG, width, height, x, y, 'g', getChannel);
-          const rVals = collectResidualNeighbors(residualR, width, height, x, y, 'r', getChannel);
+          // Average all neighbors with optimized search radius
+          const gVals = collectResidualNeighbors(residualG, width, height, x, y, 'g', getChannel, residualSearchRadius);
+          const rVals = collectResidualNeighbors(residualR, width, height, x, y, 'r', getChannel, residualSearchRadius);
           interpolatedResidualG[idx] = gVals.length > 0 ? gVals.reduce((a, b) => a + b, 0) / gVals.length : 0;
           interpolatedResidualR[idx] = rVals.length > 0 ? rVals.reduce((a, b) => a + b, 0) / rVals.length : 0;
         }
@@ -860,6 +912,24 @@ export const demosaicKikuResidual = (input: DemosaicInput, params?: DemosaicPara
       currentR[i] += interpolatedResidualR[i];
       currentG[i] += interpolatedResidualG[i];
       currentB[i] += interpolatedResidualB[i];
+    }
+    
+    // Enforce constraint: sampled pixels must equal CFA value
+    // This ensures residuals at sampled pixels are always 0 and corrections only affect interpolated channels
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const centerCh = getChannel(x, y);
+        const centerVal = cfaData[y * width + x];
+        const idx = y * width + x;
+        
+        if (centerCh === 'r') {
+          currentR[idx] = centerVal;
+        } else if (centerCh === 'g') {
+          currentG[idx] = centerVal;
+        } else {
+          currentB[idx] = centerVal;
+        }
+      }
     }
   }
   
@@ -1325,19 +1395,68 @@ export const demosaicXTransKikuResidual = (input: DemosaicInput, params?: Demosa
   const { width, height, cfaData } = input;
   const iterations = params?.kikuResidualIterations ?? 1;
   const getChannel = getXTransKernel();
+  const val = (cx: number, cy: number) => getCfaVal(cfaData, width, height, cx, cy);
   
-  // Initial estimation using basic X-Trans
-  const initial = demosaicXTransBasic(input);
-  
-  // Convert to Float32Array
+  // Initial estimation using basic X-Trans - compute directly in 0-1 range
+  // to avoid precision loss from clamp/rounding
   const initialR = new Float32Array(width * height);
   const initialG = new Float32Array(width * height);
   const initialB = new Float32Array(width * height);
   
-  for (let i = 0; i < width * height; i++) {
-    initialR[i] = initial.data[i * 4] / 255.0;
-    initialG[i] = initial.data[i * 4 + 1] / 255.0;
-    initialB[i] = initial.data[i * 4 + 2] / 255.0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const centerCh = getChannel(x, y);
+      const centerVal = cfaData[y * width + x];
+      const idx = y * width + x;
+      
+      if (centerCh === 'g') {
+        initialG[idx] = centerVal;
+        let rSum = 0, rCnt = 0, bSum = 0, bCnt = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const ch = getChannel(x + dx, y + dy);
+            const v = val(x + dx, y + dy);
+            if (ch === 'r') { rSum += v; rCnt++; }
+            if (ch === 'b') { bSum += v; bCnt++; }
+          }
+        }
+        initialR[idx] = rCnt > 0 ? rSum / rCnt : 0;
+        initialB[idx] = bCnt > 0 ? bSum / bCnt : 0;
+      } else if (centerCh === 'r') {
+        initialR[idx] = centerVal;
+        let gSum = 0, gCnt = 0;
+        if (getChannel(x - 1, y) === 'g') { gSum += val(x - 1, y); gCnt++; }
+        if (getChannel(x + 1, y) === 'g') { gSum += val(x + 1, y); gCnt++; }
+        if (getChannel(x, y - 1) === 'g') { gSum += val(x, y - 1); gCnt++; }
+        if (getChannel(x, y + 1) === 'g') { gSum += val(x, y + 1); gCnt++; }
+        initialG[idx] = gCnt > 0 ? gSum / gCnt : 0;
+        
+        let bSum = 0, bCnt = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (getChannel(x + dx, y + dy) === 'b') { bSum += val(x + dx, y + dy); bCnt++; }
+          }
+        }
+        initialB[idx] = bCnt > 0 ? bSum / bCnt : 0;
+      } else {
+        initialB[idx] = centerVal;
+        let gSum = 0, gCnt = 0;
+        if (getChannel(x - 1, y) === 'g') { gSum += val(x - 1, y); gCnt++; }
+        if (getChannel(x + 1, y) === 'g') { gSum += val(x + 1, y); gCnt++; }
+        if (getChannel(x, y - 1) === 'g') { gSum += val(x, y - 1); gCnt++; }
+        if (getChannel(x, y + 1) === 'g') { gSum += val(x, y + 1); gCnt++; }
+        initialG[idx] = gCnt > 0 ? gSum / gCnt : 0;
+        
+        let rSum = 0, rCnt = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (getChannel(x + dx, y + dy) === 'r') { rSum += val(x + dx, y + dy); rCnt++; }
+          }
+        }
+        initialR[idx] = rCnt > 0 ? rSum / rCnt : 0;
+      }
+    }
   }
   
   // Refine estimates with iterations
@@ -1352,9 +1471,15 @@ export const demosaicXTransKikuResidual = (input: DemosaicInput, params?: Demosa
   const interpolatedResidualG = new Float32Array(width * height);
   const interpolatedResidualB = new Float32Array(width * height);
   
-  const val = (cx: number, cy: number) => getCfaVal(cfaData, width, height, cx, cy);
-  
   for (let iter = 0; iter < iterations; iter++) {
+    // Reset residual arrays for this iteration
+    residualR.fill(0);
+    residualG.fill(0);
+    residualB.fill(0);
+    interpolatedResidualR.fill(0);
+    interpolatedResidualG.fill(0);
+    interpolatedResidualB.fill(0);
+    
     // Compute residuals from current estimate
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -1364,15 +1489,9 @@ export const demosaicXTransKikuResidual = (input: DemosaicInput, params?: Demosa
         
         if (centerCh === 'r') {
           residualR[idx] = centerVal - currentR[idx];
-          residualG[idx] = 0;
-          residualB[idx] = 0;
         } else if (centerCh === 'g') {
-          residualR[idx] = 0;
           residualG[idx] = centerVal - currentG[idx];
-          residualB[idx] = 0;
         } else {
-          residualR[idx] = 0;
-          residualG[idx] = 0;
           residualB[idx] = centerVal - currentB[idx];
         }
       }
@@ -1435,6 +1554,24 @@ export const demosaicXTransKikuResidual = (input: DemosaicInput, params?: Demosa
       currentR[i] += interpolatedResidualR[i];
       currentG[i] += interpolatedResidualG[i];
       currentB[i] += interpolatedResidualB[i];
+    }
+    
+    // Enforce constraint: sampled pixels must equal CFA value
+    // This ensures residuals at sampled pixels are always 0 and corrections only affect interpolated channels
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const centerCh = getChannel(x, y);
+        const centerVal = cfaData[y * width + x];
+        const idx = y * width + x;
+        
+        if (centerCh === 'r') {
+          currentR[idx] = centerVal;
+        } else if (centerCh === 'g') {
+          currentG[idx] = centerVal;
+        } else {
+          currentB[idx] = centerVal;
+        }
+      }
     }
   }
   

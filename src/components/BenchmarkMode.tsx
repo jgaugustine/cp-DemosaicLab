@@ -24,8 +24,9 @@ import {
   createColorPatches,
   createColorFringes,
 } from '@/lib/synthetic';
-import { Play, Download, FileJson, FileSpreadsheet, X, Image as ImageIcon, Trash2 } from 'lucide-react';
+import { Play, Download, FileJson, FileSpreadsheet, X, Image as ImageIcon, Trash2, Pencil, CheckSquare, Square } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { downsizeImageToDataURL } from '@/lib/imageResize';
 
 interface BenchmarkModeProps {
@@ -80,6 +81,9 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
   const [results, setResults] = useState<BenchmarkResult[]>([]);
   const [groundTruthImages, setGroundTruthImages] = useState<Map<string, ImageData>>(new Map());
   const [customUploadedImages, setCustomUploadedImages] = useState<Map<string, ImageData>>(new Map());
+  const [imageNames, setImageNames] = useState<Map<string, string>>(new Map());
+  const [renamingImageId, setRenamingImageId] = useState<string | null>(null);
+  const [renameInputValue, setRenameInputValue] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef(false);
 
@@ -126,10 +130,42 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
       newMap.delete(imageId);
       return newMap;
     });
+    setImageNames(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(imageId);
+      return newMap;
+    });
     setConfig(prev => ({
       ...prev,
       testImages: prev.testImages.filter(id => id !== imageId),
     }));
+  };
+
+  const startRename = (imageId: string) => {
+    const currentName = imageNames.get(imageId) || imageId.replace(/^uploaded_\d+_/, '');
+    setRenameInputValue(currentName);
+    setRenamingImageId(imageId);
+  };
+
+  const saveRename = () => {
+    if (renamingImageId && renameInputValue.trim()) {
+      setImageNames(prev => {
+        const newMap = new Map(prev);
+        newMap.set(renamingImageId, renameInputValue.trim());
+        return newMap;
+      });
+      setRenamingImageId(null);
+      setRenameInputValue('');
+    }
+  };
+
+  const cancelRename = () => {
+    setRenamingImageId(null);
+    setRenameInputValue('');
+  };
+
+  const getImageDisplayName = (imageId: string): string => {
+    return imageNames.get(imageId) || imageId.replace(/^uploaded_\d+_/, '');
   };
 
   // Merge custom uploaded images with prop images
@@ -173,7 +209,7 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
                 width: imageData.width,
                 height: imageData.height,
               },
-              imageName: patternId,
+              imageName: imageNames.get(patternId) || getImageDisplayName(patternId),
               groundTruth: imageData,
             });
           }
@@ -208,7 +244,7 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
     }
 
     return inputs;
-  }, [allUploadedImages]);
+  }, [allUploadedImages, imageNames]);
 
   const runBenchmark = useCallback(async () => {
     cancelRef.current = false;
@@ -234,11 +270,11 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
     const newResults: BenchmarkResult[] = [];
     let currentTest = 0;
 
-    for (const algo of config.algorithms) {
-      if (cancelRef.current) break;
+    algorithmLoop: for (const algo of config.algorithms) {
+      if (cancelRef.current) break algorithmLoop;
 
       for (const { input, imageName } of testInputs) {
-        if (cancelRef.current) break;
+        if (cancelRef.current) break algorithmLoop;
 
         const testName = `${algo} on ${imageName} with ${input.cfaPattern}`;
         setProgress(prev => ({
@@ -254,31 +290,50 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
             imageName,
             config.iterations,
             config.enableQualityMetrics,
-            defaultParams
+            defaultParams,
+            () => cancelRef.current // Pass cancellation check function
           );
           newResults.push(result);
           setResults([...newResults]);
         } catch (error) {
+          if (error instanceof Error && error.message === 'Benchmark cancelled') {
+            // Cancellation is expected, break from both loops
+            break algorithmLoop;
+          }
           console.error(`Benchmark failed for ${testName}:`, error);
         }
+        
+        // Check for cancellation after each test
+        if (cancelRef.current) break algorithmLoop;
 
         currentTest++;
         
-        // Yield to UI every few tests
-        if (currentTest % 3 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
+        // Yield to UI after each test to allow cancellation to be checked
+        await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
-    setProgress(prev => ({
-      ...prev,
-      current: totalTests,
-      currentTest: 'Complete',
-      isRunning: false,
-    }));
-
-    setResults(newResults);
+    // Only update final state if not cancelled
+    if (!cancelRef.current) {
+      setProgress(prev => ({
+        ...prev,
+        current: totalTests,
+        currentTest: 'Complete',
+        isRunning: false,
+      }));
+      setResults(newResults);
+    } else {
+      // Update progress to show cancellation
+      setProgress(prev => ({
+        ...prev,
+        currentTest: 'Cancelled',
+        isRunning: false,
+      }));
+      // Keep partial results if any were collected
+      if (newResults.length > 0) {
+        setResults(newResults);
+      }
+    }
   }, [config, generateTestInputs, defaultParams]);
 
   const handleCancel = () => {
@@ -384,6 +439,38 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
     }));
   };
 
+  const checkAllAlgorithms = () => {
+    setConfig(prev => ({
+      ...prev,
+      algorithms: [...ALL_ALGORITHMS],
+    }));
+  };
+
+  const uncheckAllAlgorithms = () => {
+    setConfig(prev => ({
+      ...prev,
+      algorithms: [],
+    }));
+  };
+
+  const checkAllTestImages = () => {
+    const allTestImages = [
+      ...SYNTHETIC_PATTERNS.map(p => p.id),
+      ...Array.from(customUploadedImages.keys()),
+    ];
+    setConfig(prev => ({
+      ...prev,
+      testImages: allTestImages,
+    }));
+  };
+
+  const uncheckAllTestImages = () => {
+    setConfig(prev => ({
+      ...prev,
+      testImages: [],
+    }));
+  };
+
   return (
     <div className="space-y-6 p-6">
       <Card>
@@ -392,7 +479,29 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
-            <Label className="mb-3 block">Algorithms</Label>
+            <div className="flex items-center justify-between mb-3">
+              <Label>Algorithms</Label>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={checkAllAlgorithms}
+                  className="h-7 text-xs"
+                >
+                  <CheckSquare className="mr-1 h-3 w-3" />
+                  Check All
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={uncheckAllAlgorithms}
+                  className="h-7 text-xs"
+                >
+                  <Square className="mr-1 h-3 w-3" />
+                  Uncheck All
+                </Button>
+              </div>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {ALL_ALGORITHMS.map(algo => (
                 <div key={algo} className="flex items-center space-x-2">
@@ -412,7 +521,29 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
           <Separator />
 
           <div>
-            <Label className="mb-3 block">Test Images</Label>
+            <div className="flex items-center justify-between mb-3">
+              <Label>Test Images</Label>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={checkAllTestImages}
+                  className="h-7 text-xs"
+                >
+                  <CheckSquare className="mr-1 h-3 w-3" />
+                  Check All
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={uncheckAllTestImages}
+                  className="h-7 text-xs"
+                >
+                  <Square className="mr-1 h-3 w-3" />
+                  Uncheck All
+                </Button>
+              </div>
+            </div>
             <div className="space-y-3">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 {SYNTHETIC_PATTERNS.map(pattern => (
@@ -436,24 +567,36 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
                   <div className="space-y-1">
                     {Array.from(customUploadedImages.keys()).map(imageId => (
                       <div key={imageId} className="flex items-center justify-between p-2 bg-muted rounded">
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2 flex-1 min-w-0">
                           <Checkbox
                             id={`image-${imageId}`}
                             checked={config.testImages.includes(imageId)}
                             onCheckedChange={() => toggleTestImage(imageId)}
                           />
-                          <Label htmlFor={`image-${imageId}`} className="font-normal cursor-pointer text-sm">
-                            {imageId.replace(/^uploaded_\d+_/, '')}
+                          <Label htmlFor={`image-${imageId}`} className="font-normal cursor-pointer text-sm truncate">
+                            {getImageDisplayName(imageId)}
                           </Label>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => removeCustomImage(imageId)}
-                          className="h-6 w-6 p-0"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                        <div className="flex items-center space-x-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => startRename(imageId)}
+                            className="h-6 w-6 p-0"
+                            title="Rename image"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeCustomImage(imageId)}
+                            className="h-6 w-6 p-0"
+                            title="Remove image"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -596,6 +739,41 @@ export function BenchmarkMode({ uploadedImages = new Map(), defaultParams }: Ben
           </Card>
         </>
       )}
+
+      {/* Rename Dialog */}
+      <Dialog open={renamingImageId !== null} onOpenChange={(open) => !open && cancelRename()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename Image</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="rename-input">Image Name</Label>
+              <Input
+                id="rename-input"
+                value={renameInputValue}
+                onChange={(e) => setRenameInputValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    saveRename();
+                  } else if (e.key === 'Escape') {
+                    cancelRename();
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={cancelRename}>
+              Cancel
+            </Button>
+            <Button onClick={saveRename} disabled={!renameInputValue.trim()}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

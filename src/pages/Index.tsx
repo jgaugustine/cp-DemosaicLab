@@ -18,6 +18,10 @@ import {
   demosaicLienEdgeBased,
   demosaicWuPolynomial,
   demosaicKikuResidual,
+  demosaicXTransNiuEdgeSensing,
+  demosaicXTransLienEdgeBased,
+  demosaicXTransWuPolynomial,
+  demosaicXTransKikuResidual,
   computeErrorStats
 } from '@/lib/demosaic';
 import { decodeDNG } from '@/lib/dngDecode';
@@ -70,6 +74,7 @@ export default function Index() {
   const [params, setParams] = useState<DemosaicParams>({
     niuLogisticThreshold: 0.1,
     wuPolynomialDegree: 2,
+    kikuResidualIterations: 3,
   });
 
   // Algo 2 State
@@ -80,6 +85,7 @@ export default function Index() {
   const [params2, setParams2] = useState<DemosaicParams>({
     niuLogisticThreshold: 0.1,
     wuPolynomialDegree: 2,
+    kikuResidualIterations: 3,
   });
 
   const [cfaType, setCfaType] = useState<CFAType>('bayer');
@@ -93,6 +99,33 @@ export default function Index() {
   const [isFit, setIsFit] = useState(true);
   const isAnyProcessing = isProcessing1 || isProcessing2;
   const [showProcessingOverlay, setShowProcessingOverlay] = useState(false);
+  
+  // Helper to get algorithm display name (defined early to avoid initialization order issues)
+  const getAlgorithmName = (algo: DemosaicAlgorithm): string => {
+    switch (algo) {
+      case 'nearest':
+        return 'Nearest Neighbor';
+      case 'bilinear':
+        return 'Bilinear Interpolation';
+      case 'malvar':
+        return 'Malvar';
+      case 'high_quality':
+        return 'High Quality';
+      case 'custom':
+        return 'Custom';
+      case 'niu_edge_sensing':
+        return 'Niu et al. (Edge Sensing)';
+      case 'lien_edge_based':
+        return 'Lien et al. (Edge-Based)';
+      case 'wu_polynomial':
+        return 'Wu et al. (Polynomial)';
+      case 'kiku_residual':
+        return 'Kiku et al. (Residual)';
+      default:
+        return 'Unknown';
+    }
+  };
+  
   const processingLabel = React.useMemo(() => {
     if (isProcessing1 && isProcessing2) {
       return `Algorithms A (${getAlgorithmName(algorithm)}) & B (${getAlgorithmName(algorithm2)})`;
@@ -350,32 +383,6 @@ export default function Index() {
 
   // Check if original view is available
   const hasGroundTruth = input && (input.mode === 'lab' || input.mode === 'synthetic') && input.groundTruthRGB;
-
-  // Helper to get algorithm display name
-  const getAlgorithmName = (algo: DemosaicAlgorithm): string => {
-    switch (algo) {
-      case 'nearest':
-        return 'Nearest Neighbor';
-      case 'bilinear':
-        return 'Bilinear Interpolation';
-      case 'malvar':
-        return 'Malvar';
-      case 'high_quality':
-        return 'High Quality';
-      case 'custom':
-        return 'Custom';
-      case 'niu_edge_sensing':
-        return 'Niu et al. (Edge Sensing)';
-      case 'wu_polynomial':
-        return 'Wu et al. (Polynomial)';
-      case 'lien_edge_based':
-        return 'Lien et al. (Edge-Based)';
-      case 'kiku_residual':
-        return 'Kiku et al. (Residual)';
-      default:
-        return 'Unknown';
-    }
-  };
 
   // Get viewport configurations for a preset
   const getPresetConfigs = useCallback((
@@ -960,6 +967,18 @@ export default function Index() {
 
   // Helper to run demosaic with caching
   const runDemosaic = useCallback((inp: DemosaicInput, algo: DemosaicAlgorithm, algoParams?: DemosaicParams) => {
+    // Use X-Trans specific implementations when CFA pattern is X-Trans
+    if (inp.cfaPattern === 'xtrans') {
+      if (algo === 'nearest') return demosaicNearest(inp);
+      if (algo === 'bilinear') return demosaicBilinear(inp);
+      if (algo === 'niu_edge_sensing') return demosaicXTransNiuEdgeSensing(inp, algoParams);
+      if (algo === 'lien_edge_based') return demosaicXTransLienEdgeBased(inp);
+      if (algo === 'wu_polynomial') return demosaicXTransWuPolynomial(inp, algoParams);
+      if (algo === 'kiku_residual') return demosaicXTransKikuResidual(inp, algoParams);
+      return new ImageData(inp.width, inp.height);
+    }
+    
+    // Use Bayer/generic implementations for Bayer pattern
     if (algo === 'nearest') return demosaicNearest(inp);
     if (algo === 'bilinear') return demosaicBilinear(inp);
     if (algo === 'niu_edge_sensing') return demosaicNiuEdgeSensing(inp, algoParams);
@@ -1157,7 +1176,7 @@ export default function Index() {
                 </ToggleGroup>
                 <Button 
                   variant="outline" 
-                  className="w-full mt-3"
+                  className="w-full mt-3 !text-xs"
                   onClick={() => setBenchmarkMode(true)}
                 >
                   Benchmark Mode
@@ -1251,10 +1270,20 @@ export default function Index() {
                   disabled={input?.mode === 'raw'}
                   className="w-full"
                 >
-                  <ToggleGroupItem value="bayer" aria-label="Bayer CFA" className="flex-1 text-xs" disabled={input?.mode === 'raw'}>
+                  <ToggleGroupItem 
+                    value="bayer" 
+                    aria-label="Bayer CFA" 
+                    className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground" 
+                    disabled={input?.mode === 'raw'}
+                  >
                     Bayer (RGGB)
                   </ToggleGroupItem>
-                  <ToggleGroupItem value="xtrans" aria-label="X-Trans CFA" className="flex-1 text-xs" disabled={input?.mode === 'raw'}>
+                  <ToggleGroupItem 
+                    value="xtrans" 
+                    aria-label="X-Trans CFA" 
+                    className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground" 
+                    disabled={input?.mode === 'raw'}
+                  >
                     X-Trans (6x6)
                   </ToggleGroupItem>
                 </ToggleGroup>
@@ -1598,14 +1627,26 @@ export default function Index() {
                     className="w-full"
                   >
                     {hasGroundTruth && (
-                      <ToggleGroupItem value="original" aria-label="Show original" className="flex-1 text-xs">
+                      <ToggleGroupItem 
+                        value="original" 
+                        aria-label="Show original" 
+                        className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+                      >
                         Original
                       </ToggleGroupItem>
                     )}
-                    <ToggleGroupItem value="cfa" aria-label="Show CFA" className="flex-1 text-xs">
+                    <ToggleGroupItem 
+                      value="cfa" 
+                      aria-label="Show CFA" 
+                      className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+                    >
                       CFA
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="reconstruction" aria-label="Show reconstruction" className="flex-1 text-xs">
+                    <ToggleGroupItem 
+                      value="reconstruction" 
+                      aria-label="Show reconstruction" 
+                      className="flex-1 text-xs bg-background border border-input hover:bg-accent/60 hover:text-accent-foreground data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+                    >
                       Reconstruction
                     </ToggleGroupItem>
                   </ToggleGroup>
@@ -1834,6 +1875,7 @@ export default function Index() {
                   } : undefined}
                   errorStats={errorStats}
                   input={input}
+                  syntheticType={syntheticType}
                   params={params}
                 />
             )}
